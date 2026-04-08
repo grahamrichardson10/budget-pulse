@@ -21,26 +21,30 @@ interface Results {
   shouldHave: number
   buffer: number
   projectedAtPayday: number
+  cycleDays: number
 }
 
 function computeResults(balance: number, a: Assumptions): Results {
   const spendable = a.salary - a.rent
-  const baseline = spendable / 30
   const now = new Date()
   const dom = now.getDate()
-  const daysLeft =
-    dom < a.paydayDay
-      ? a.paydayDay - dom
-      : Math.round(
-          (new Date(now.getFullYear(), now.getMonth() + 1, a.paydayDay).getTime() -
-            now.getTime()) /
-            86400000
-        )
-  const shouldHave = spendable - (dom - 1) * baseline
+
+  // Actual cycle: last payday → next payday (varies 28–31 days)
+  const cycleStart = dom >= a.paydayDay
+    ? new Date(now.getFullYear(), now.getMonth(), a.paydayDay)
+    : new Date(now.getFullYear(), now.getMonth() - 1, a.paydayDay)
+  const cycleEnd = new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, a.paydayDay)
+
+  const cycleDays = Math.round((cycleEnd.getTime() - cycleStart.getTime()) / 86400000)
+  const daysSinceStart = Math.round((now.getTime() - cycleStart.getTime()) / 86400000)
+  const daysLeft = Math.round((cycleEnd.getTime() - now.getTime()) / 86400000)
+
+  const baseline = spendable / cycleDays
+  const shouldHave = spendable - daysSinceStart * baseline
   const buffer = balance - shouldHave
   const daily = Math.round(balance / daysLeft)
   const projectedAtPayday = Math.round(balance - baseline * daysLeft)
-  return { balance, daily, daysLeft, shouldHave, buffer, projectedAtPayday }
+  return { balance, daily, daysLeft, shouldHave, buffer, projectedAtPayday, cycleDays }
 }
 
 function fmt(n: number) {
@@ -85,7 +89,8 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const spendable = assumptions.salary - assumptions.rent
-  const baseline = Math.round(spendable / 30)
+  const cycleDays = results?.cycleDays ?? 30
+  const baseline = Math.round(spendable / cycleDays)
 
   function handleShowResults(balance: number) {
     setResults(computeResults(balance, assumptions))
@@ -296,7 +301,7 @@ export default function Home() {
                 </div>
                 <div style={{ ...S.assumptionRow, borderBottom: 'none' }}>
                   <span style={S.assumptionLabel}>Baseline (auto)</span>
-                  <span style={S.assumptionReadonly}>{fmt(baseline)} SEK/day</span>
+                  <span style={S.assumptionReadonly}>{fmt(baseline)} SEK/day · {cycleDays}d cycle</span>
                 </div>
               </div>
             )}
