@@ -52,7 +52,7 @@ async function resizeToBlob(file: File): Promise<Blob> {
     const img = new Image()
     img.onload = () => {
       URL.revokeObjectURL(url)
-      const MAX = 1200
+      const MAX = 800
       let { width, height } = img
       if (width > MAX) { height = Math.round((height * MAX) / width); width = MAX }
       const canvas = document.createElement('canvas')
