@@ -14,7 +14,7 @@ interface Assumptions {
 const DEFAULT_ASSUMPTIONS: Assumptions = {
   salary: 34860,
   rent: 15000,
-  paydayDay: 26,
+  paydayDay: 25,
   marketRate: 6,
   dob: '1993-09-07',
   retirementAge: 65,
@@ -473,6 +473,8 @@ export default function Home() {
                       value={assumptions.marketRate}
                       onChange={e => handleAssumptionChange('marketRate', e.target.value)}
                       onClick={e => e.stopPropagation()}
+                      onTouchStart={e => e.stopPropagation()}
+                      onTouchEnd={e => e.stopPropagation()}
                       style={{ background: 'transparent', border: 'none', borderBottom: '1px solid #c8f04a', color: '#c8f04a', fontFamily: "'DM Mono', monospace", fontSize: '0.72rem', width: '28px', outline: 'none', textAlign: 'center' as const, padding: '0 1px' }}
                     />
                     {'% return → '}
