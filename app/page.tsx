@@ -51,14 +51,14 @@ function computeResults(balance: number, a: Assumptions): Results {
   return { balance, daily, daysLeft, daysSince, shouldHave, buffer, cycleDays }
 }
 
-function computeRetirementValue(buffer: number, a: Assumptions): number {
-  if (buffer <= 0) return 0
+function computeRetirementValue(amount: number, a: Assumptions): number {
+  if (amount <= 0) return 0
   const dob = new Date(a.dob)
   const now = new Date()
   const ageYears = (now.getTime() - dob.getTime()) / (365.25 * 86400000)
   const yearsToRetirement = a.retirementAge - ageYears
-  if (yearsToRetirement <= 0) return buffer
-  return buffer * Math.pow(1 + a.marketRate / 100, yearsToRetirement)
+  if (yearsToRetirement <= 0) return amount
+  return amount * Math.pow(1 + a.marketRate / 100, yearsToRetirement)
 }
 
 function expectedBalanceForDay(date: Date, a: Assumptions): number {
@@ -82,7 +82,6 @@ function fmtK(n: number): string {
   return String(Math.round(n))
 }
 
-// Resize image using canvas.toBlob — avoids atob/base64 string entirely (fixes iOS Safari SyntaxError)
 async function resizeToBlob(file: File): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
@@ -121,18 +120,39 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [assumptions, setAssumptions] = useState<Assumptions>(DEFAULT_ASSUMPTIONS)
   const [assumptionsOpen, setAssumptionsOpen] = useState(false)
+  const [progressTooltipOpen, setProgressTooltipOpen] = useState(false)
+  const [progressDetailOpen, setProgressDetailOpen] = useState(false)
+  const [paceOpen, setPaceOpen] = useState(false)
+  const [paceInvestOpen, setPaceInvestOpen] = useState(false)
+  const [calendarOpen, setCalendarOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const spendable = assumptions.salary - assumptions.rent
   const cycleDays = results?.cycleDays ?? 30
   const baseline = Math.round(spendable / cycleDays)
 
-  // Calendar data (computed once per render, stable)
+  // Progress bar: bar = piggy bank, left=payday right=next payday
+  // Dim marker = where spending should be; bright marker = where it actually is
+  const amountSpent = results ? Math.max(0, spendable - results.balance) : 0
+  const spentPct = results && spendable > 0 ? Math.min(100, (amountSpent / spendable) * 100) : 0
+  const targetPct = results ? Math.min(100, (results.daysSince / results.cycleDays) * 100) : 0
+  const isUnderBudget = results ? results.buffer >= 0 : true
+  const accentColor = isUnderBudget ? '#c8f04a' : '#ff4d6d'
+
+  // Pace disclosure calculations
+  const avgSpend = results && results.daysSince > 0
+    ? Math.max(0, (spendable - results.balance) / results.daysSince)
+    : baseline
+  const projectedEnd = results ? Math.round(results.balance - avgSpend * results.daysLeft) : 0
+  const retirementValueFromBuffer = results ? computeRetirementValue(Math.max(0, results.buffer), assumptions) : 0
+  const retirementValueFromEnd = projectedEnd > 0 ? computeRetirementValue(projectedEnd, assumptions) : 0
+
+  // Calendar
   const now = new Date()
   const calYear = now.getFullYear()
   const calMonth = now.getMonth()
   const todayDate = now.getDate()
-  const firstDow = (new Date(calYear, calMonth, 1).getDay() + 6) % 7 // Mon=0
+  const firstDow = (new Date(calYear, calMonth, 1).getDay() + 6) % 7
   const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate()
   const calCells: (number | null)[] = [
     ...Array(firstDow).fill(null),
@@ -144,7 +164,6 @@ export default function Home() {
   const dobParts = assumptions.dob.split('-').map(Number)
   const dobYear = dobParts[0], dobMonth = dobParts[1], dobDay = dobParts[2]
 
-  // Load persisted data on mount
   useEffect(() => {
     try {
       const savedBalance = localStorage.getItem(STORAGE_KEY_BALANCE)
@@ -200,6 +219,11 @@ export default function Home() {
     setResults(null)
     setImgSrc(null)
     setStatus('')
+    setProgressTooltipOpen(false)
+    setProgressDetailOpen(false)
+    setPaceOpen(false)
+    setPaceInvestOpen(false)
+    setCalendarOpen(false)
   }
 
   async function loadAndAnalyze(file: File) {
@@ -207,7 +231,6 @@ export default function Home() {
     setImgSrc(previewUrl)
     setStatus('Analyzing…')
     setLoading(true)
-
     try {
       const blob = await resizeToBlob(file)
       const fd = new FormData()
@@ -251,11 +274,6 @@ export default function Home() {
     tryClipboardSilent()
   }
 
-  const retirementValue = results ? computeRetirementValue(results.buffer, assumptions) : 0
-  const progressPct = results ? Math.min(100, Math.max(0, (results.daysSince / results.cycleDays) * 100)) : 0
-  const isAhead = results ? results.buffer >= 0 : true
-  const accentColor = isAhead ? '#c8f04a' : '#ff4d6d'
-
   // ── Styles ───────────────────────────────────────────────────────────────────
   const S = {
     wrapper: { minHeight: '100vh', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', padding: '40px 16px 80px', gap: '24px' },
@@ -264,7 +282,7 @@ export default function Home() {
     sub: { fontSize: '0.7rem', color: '#6b6b80', letterSpacing: '0.15em', marginTop: '4px', textTransform: 'uppercase' as const },
     card: { background: '#111118', border: '1px solid #1e1e2e', borderRadius: '16px', padding: '24px', width: '100%', maxWidth: '420px' },
     tabRow: { display: 'flex', gap: '8px', marginBottom: '20px' },
-    tab: (active: boolean) => ({ flex: 1, padding: '9px 0', borderRadius: '8px', border: active ? 'none' : '1px solid #1e1e2e', background: active ? '#c8f04a' : 'transparent', color: active ? '#0a0a0f' : '#6b6b80', fontFamily: "'DM Mono', monospace", fontSize: '0.78rem', fontWeight: active ? 500 : 400, cursor: 'pointer' }),
+    tabBtn: (active: boolean) => ({ flex: 1, padding: '9px 0', borderRadius: '8px', border: active ? 'none' : '1px solid #1e1e2e', background: active ? '#c8f04a' : 'transparent', color: active ? '#0a0a0f' : '#6b6b80', fontFamily: "'DM Mono', monospace", fontSize: '0.78rem', fontWeight: active ? 500 : 400, cursor: 'pointer' }),
     label: { fontSize: '0.7rem', color: '#6b6b80', letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginBottom: '8px', display: 'block' },
     input: { width: '100%', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '10px', padding: '14px 16px', color: '#e8e8f0', fontFamily: "'DM Mono', monospace", fontSize: '1.1rem', outline: 'none', marginBottom: '16px' },
     btnAccent: { width: '100%', background: '#c8f04a', border: 'none', borderRadius: '10px', padding: '14px', color: '#0a0a0f', fontFamily: "'DM Mono', monospace", fontSize: '0.9rem', fontWeight: 500, cursor: 'pointer' },
@@ -307,7 +325,8 @@ export default function Home() {
 
         {results ? (
           <div style={S.resultCard}>
-            {/* Big number */}
+
+            {/* ── Big number ── */}
             <div style={S.bigLabel}>Daily budget remaining</div>
             <div style={{ display: 'flex', alignItems: 'baseline' }}>
               <span style={S.bigNumber(results.daily >= baseline ? '#c8f04a' : '#ff4d6d')}>
@@ -315,104 +334,202 @@ export default function Home() {
               </span>
               <span style={S.bigUnit}>SEK/day</span>
             </div>
-            <div style={S.badge(results.buffer >= 0)}>
-              <span style={S.dot(results.buffer >= 0)} />
-              {results.buffer >= 0
-                ? `${fmt(results.buffer)} ahead`
-                : `${fmt(Math.abs(results.buffer))} behind`}
+            <div style={S.badge(isUnderBudget)}>
+              <span style={S.dot(isUnderBudget)} />
+              {isUnderBudget ? `${fmt(results.buffer)} ahead` : `${fmt(Math.abs(results.buffer))} behind`}
             </div>
 
-            {/* Progress bar */}
-            <div style={{ margin: '16px 0 4px' }}>
+            {/* ── Progress bar ── */}
+            <div style={{ margin: '18px 0 4px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
                 <span style={{ fontSize: '0.6rem', color: '#6b6b80' }}>payday</span>
                 <span style={{ fontSize: '0.6rem', color: '#6b6b80' }}>next payday</span>
               </div>
-              <div style={{ position: 'relative', height: '24px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '6px', overflow: 'hidden' }}>
-                <div style={{
-                  position: 'absolute', left: 0, top: 0, bottom: 0,
-                  width: `${progressPct}%`,
-                  background: isAhead ? 'rgba(200,240,74,0.12)' : 'rgba(255,77,109,0.12)',
-                }} />
-                <div style={{
-                  position: 'absolute', top: '2px', bottom: '2px',
-                  left: `calc(${progressPct}% - 1px)`,
-                  width: '2px',
-                  borderRadius: '1px',
-                  background: accentColor,
-                }} />
+              <div
+                style={{ position: 'relative', height: '32px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '6px', overflow: 'hidden', cursor: 'pointer' }}
+                onClick={() => setProgressTooltipOpen(o => !o)}
+              >
+                {/* Shading behind target marker */}
+                <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${targetPct}%`, background: 'rgba(100,100,130,0.12)' }} />
+                {/* Dim marker: target spend position */}
+                <div style={{ position: 'absolute', top: '4px', bottom: '4px', left: `calc(${targetPct}% - 1px)`, width: '2px', borderRadius: '1px', background: '#3a3a5c' }} />
+                {/* Bright marker: actual spend position */}
+                <div style={{ position: 'absolute', top: '2px', bottom: '2px', left: `calc(${spentPct}% - 1px)`, width: '3px', borderRadius: '2px', background: accentColor }} />
               </div>
+
+              {progressTooltipOpen && (
+                <div style={{ background: '#0a0a0f', border: `1px solid ${isUnderBudget ? 'rgba(200,240,74,0.2)' : 'rgba(255,77,109,0.2)'}`, borderRadius: '8px', padding: '10px 12px', marginTop: '6px' }}>
+                  <div style={{ fontSize: '0.78rem', color: accentColor, fontFamily: "'DM Mono', monospace" }}>
+                    {isUnderBudget
+                      ? `In the green by ${fmt(results.buffer)} SEK`
+                      : `In the red by ${fmt(Math.abs(results.buffer))} SEK`}
+                  </div>
+                  <button
+                    style={{ background: 'none', border: 'none', color: '#6b6b80', fontSize: '0.65rem', fontFamily: "'DM Mono', monospace", cursor: 'pointer', padding: '6px 0 2px', display: 'block' }}
+                    onClick={e => { e.stopPropagation(); setProgressDetailOpen(o => !o) }}
+                  >
+                    {progressDetailOpen ? '▲ hide' : '▼ how does this work?'}
+                  </button>
+                  {progressDetailOpen && (
+                    <p style={{ fontSize: '0.7rem', color: '#9090a0', margin: '4px 0 0', lineHeight: 1.55 }}>
+                      {isUnderBudget
+                        ? `Your target is to spend ${fmt(baseline)} SEK/day so your balance reaches zero by payday. You've spent less than planned — your money is lasting longer than expected. The bright green line is to the left of the dim target marker.`
+                        : `Your target is to spend ${fmt(baseline)} SEK/day so your balance reaches zero by payday. You've spent more than planned — your money is running out faster than expected. The red line is to the right of the dim target marker.`}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             <div style={S.divider} />
 
-            {/* Metrics */}
-            {[
-              { label: "Today's target balance", value: fmt(results.shouldHave) + ' SEK', color: '#e8e8f0' },
-              { label: 'Actual balance', value: fmt(results.balance) + ' SEK', color: results.balance >= results.shouldHave ? '#c8f04a' : '#ff4d6d' },
-              {
-                label: 'Pace',
-                value: (results.buffer >= 0 ? '+' : '−') + fmt(Math.abs(results.buffer)) + ' SEK',
-                color: results.buffer >= 0 ? '#c8f04a' : '#ff4d6d',
-              },
-              {
-                label: `At retirement (age ${assumptions.retirementAge})`,
-                value: retirementValue > 0 ? fmt(retirementValue) + ' SEK' : '—',
-                color: retirementValue > 0 ? '#c8f04a' : '#6b6b80',
-              },
-              {
-                label: 'Days since / until payday',
-                value: `${results.daysSince} / ${results.daysLeft}`,
-                color: '#e8e8f0',
-              },
-            ].map((m) => (
-              <div key={m.label} style={S.metricRow}>
-                <span style={S.metricLabel}>{m.label}</span>
-                <span style={S.metricValue(m.color)}>{m.value}</span>
+            {/* ── Today's target balance + calendar toggle ── */}
+            <div style={S.metricRow}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={S.metricLabel}>Today&apos;s target balance</span>
+                <button
+                  onClick={() => setCalendarOpen(o => !o)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontSize: '0.85rem', lineHeight: 1, opacity: calendarOpen ? 1 : 0.45, transition: 'opacity 0.15s' }}
+                >
+                  📅
+                </button>
               </div>
-            ))}
+              <span style={S.metricValue('#e8e8f0')}>{fmt(results.shouldHave)} SEK</span>
+            </div>
 
-            {/* Calendar */}
-            <div style={{ marginTop: '24px' }}>
-              <div style={{ fontSize: '0.68rem', color: '#6b6b80', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '10px' }}>
-                {MONTH_FULL[calMonth]} {calYear}
+            {/* ── Calendar (hidden by default) ── */}
+            {calendarOpen && (
+              <div style={{ marginBottom: '4px' }}>
+                <div style={{ fontSize: '0.65rem', color: '#6b6b80', letterSpacing: '0.1em', textTransform: 'uppercase' as const, margin: '8px 0' }}>
+                  {MONTH_FULL[calMonth]} {calYear}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+                  {DOW_LABELS.map((d, i) => (
+                    <div key={i} style={{ textAlign: 'center' as const, fontSize: '0.58rem', color: '#6b6b80', paddingBottom: '3px', fontFamily: "'DM Mono', monospace" }}>{d}</div>
+                  ))}
+                  {calCells.map((day, i) => {
+                    if (!day) return <div key={i} />
+                    const isToday = day === todayDate
+                    const isPayday = day === assumptions.paydayDay
+                    const isPast = day < todayDate
+                    const bal = expectedBalanceForDay(new Date(calYear, calMonth, day), assumptions)
+                    return (
+                      <div key={i} style={{
+                        background: isToday ? '#c8f04a' : '#0a0a0f',
+                        border: isPayday && !isToday ? '2px solid #c8f04a' : '1px solid #1e1e2e',
+                        borderRadius: '6px',
+                        padding: '4px 2px',
+                        textAlign: 'center' as const,
+                        opacity: isPast && !isToday ? 0.4 : 1,
+                        minHeight: '44px',
+                        display: 'flex',
+                        flexDirection: 'column' as const,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '2px',
+                      }}>
+                        <span style={{ fontSize: '0.65rem', color: isToday ? '#0a0a0f' : '#e8e8f0', fontFamily: "'DM Mono', monospace", fontWeight: isToday ? 700 : 400 }}>{day}</span>
+                        <span style={{ fontSize: '0.55rem', color: isToday ? '#1a1a2e' : '#6b6b80', fontFamily: "'DM Mono', monospace" }}>{fmtK(bal)}</span>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
-                {DOW_LABELS.map((d, i) => (
-                  <div key={i} style={{ textAlign: 'center', fontSize: '0.58rem', color: '#6b6b80', paddingBottom: '4px', fontFamily: "'DM Mono', monospace" }}>
-                    {d}
+            )}
+
+            {/* ── Actual balance ── */}
+            <div style={S.metricRow}>
+              <span style={S.metricLabel}>Actual balance</span>
+              <span style={S.metricValue(results.balance >= results.shouldHave ? '#c8f04a' : '#ff4d6d')}>{fmt(results.balance)} SEK</span>
+            </div>
+
+            {/* ── Pace row — expandable ── */}
+            <div>
+              <div
+                style={{ ...S.metricRow, cursor: 'pointer' }}
+                onClick={() => setPaceOpen(o => !o)}
+              >
+                <span style={S.metricLabel}>Pace</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: '0.82rem', color: accentColor }}>
+                    {isUnderBudget
+                      ? `Under budget · ${fmt(results.buffer)} SEK`
+                      : `Over budget · ${fmt(Math.abs(results.buffer))} SEK`}
+                  </span>
+                  <span style={{ color: '#6b6b80', fontSize: '0.6rem', display: 'inline-block', transition: 'transform 0.2s', transform: paceOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>▼</span>
+                </div>
+              </div>
+
+              {paceOpen && (
+                <div style={{ background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '8px', padding: '12px 14px', margin: '4px 0 4px' }}>
+
+                  {/* Investment of buffer */}
+                  <div style={{ fontSize: '0.72rem', color: '#9090a0', lineHeight: 1.7, paddingBottom: '10px', borderBottom: '1px solid #1e1e2e', marginBottom: '10px' }}>
+                    If you invested{' '}
+                    <span style={{ color: '#e8e8f0' }}>{fmt(Math.max(0, results.buffer))} SEK</span>
+                    {' '}today at{' '}
+                    <input
+                      type="number"
+                      value={assumptions.marketRate}
+                      onChange={e => handleAssumptionChange('marketRate', e.target.value)}
+                      onClick={e => e.stopPropagation()}
+                      style={{ background: 'transparent', border: 'none', borderBottom: '1px solid #c8f04a', color: '#c8f04a', fontFamily: "'DM Mono', monospace", fontSize: '0.72rem', width: '28px', outline: 'none', textAlign: 'center' as const, padding: '0 1px' }}
+                    />
+                    {'% return → '}
+                    <span style={{ color: '#c8f04a', fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: '0.8rem' }}>
+                      {fmt(retirementValueFromBuffer)} SEK
+                    </span>
+                    {' at retirement (age '}{assumptions.retirementAge}{')'}
                   </div>
-                ))}
-                {calCells.map((day, i) => {
-                  if (!day) return <div key={i} />
-                  const isToday = day === todayDate
-                  const isPayday = day === assumptions.paydayDay
-                  const isPast = day < todayDate
-                  const bal = expectedBalanceForDay(new Date(calYear, calMonth, day), assumptions)
-                  return (
-                    <div key={i} style={{
-                      background: isToday ? '#c8f04a' : '#0a0a0f',
-                      border: isPayday && !isToday ? '2px solid #c8f04a' : '1px solid #1e1e2e',
-                      borderRadius: '6px',
-                      padding: '4px 2px',
-                      textAlign: 'center',
-                      opacity: isPast && !isToday ? 0.4 : 1,
-                      minHeight: '44px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '2px',
-                    }}>
-                      <span style={{ fontSize: '0.65rem', color: isToday ? '#0a0a0f' : '#e8e8f0', fontFamily: "'DM Mono', monospace", fontWeight: isToday ? 700 : 400 }}>{day}</span>
-                      <span style={{ fontSize: '0.55rem', color: isToday ? '#1a1a2e' : '#6b6b80', fontFamily: "'DM Mono', monospace" }}>{fmtK(bal)}</span>
-                    </div>
-                  )
-                })}
+
+                  {/* Average spend + end-of-cycle projection */}
+                  {results.daysSince > 0 && (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                        <span style={{ fontSize: '0.7rem', color: '#6b6b80' }}>Avg spend/day (excl. rent)</span>
+                        <span style={{ fontSize: '0.7rem', color: '#e8e8f0', fontFamily: "'DM Mono', monospace" }}>{fmt(avgSpend)} SEK</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                        <span style={{ fontSize: '0.7rem', color: '#6b6b80' }}>At this rate, end of cycle</span>
+                        <span style={{ fontSize: '0.7rem', color: projectedEnd >= 0 ? '#c8f04a' : '#ff4d6d', fontFamily: "'DM Mono', monospace" }}>{fmt(projectedEnd)} SEK</span>
+                      </div>
+
+                      {projectedEnd > 0 && (
+                        <>
+                          <button
+                            style={{ background: 'none', border: 'none', color: '#6b6b80', fontSize: '0.62rem', fontFamily: "'DM Mono', monospace", cursor: 'pointer', padding: '6px 0 0', display: 'block' }}
+                            onClick={e => { e.stopPropagation(); setPaceInvestOpen(o => !o) }}
+                          >
+                            {paceInvestOpen ? '▲ hide' : `▼ if invested until age ${assumptions.retirementAge}`}
+                          </button>
+                          {paceInvestOpen && (
+                            <div style={{ fontSize: '0.72rem', color: '#9090a0', lineHeight: 1.7, paddingTop: '6px' }}>
+                              {fmt(projectedEnd)} SEK at {assumptions.marketRate}% →{' '}
+                              <span style={{ color: '#c8f04a', fontFamily: "'Syne', sans-serif", fontWeight: 700 }}>
+                                {fmt(retirementValueFromEnd)} SEK
+                              </span>
+                              {' at age '}{assumptions.retirementAge}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* ── Days since / until payday ── */}
+            <div style={S.metricRow}>
+              <span style={S.metricLabel}>Days since / until payday</span>
+              <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: '0.95rem' }}>
+                <span style={{ color: '#e8e8f0' }}>{results.daysSince}</span>
+                <span style={{ color: '#6b6b80', fontWeight: 400, fontFamily: "'DM Mono', monospace", fontSize: '0.85rem' }}> / </span>
+                <span style={{ color: '#c8f04a' }}>{results.daysLeft}</span>
               </div>
             </div>
 
-            {/* Assumptions disclosure */}
+            {/* ── Assumptions disclosure ── */}
             <button style={S.disclosureBtn} onClick={() => setAssumptionsOpen(o => !o)}>
               <span style={{ display: 'inline-block', transition: 'transform 0.2s', transform: assumptionsOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</span>
               Assumptions
@@ -438,7 +555,6 @@ export default function Home() {
                   </div>
                 ))}
 
-                {/* Date of birth */}
                 <div style={S.assumptionRow}>
                   <span style={S.assumptionLabel}>Date of birth</span>
                   <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
@@ -460,7 +576,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Read-only auto fields */}
                 <div style={S.assumptionRow}>
                   <span style={S.assumptionLabel}>Spendable (auto)</span>
                   <span style={S.assumptionReadonly}>{fmt(spendable)} SEK</span>
@@ -477,8 +592,8 @@ export default function Home() {
         ) : (
           <div style={S.card}>
             <div style={S.tabRow}>
-              <button style={S.tab(tab === 'manual')} onClick={() => setTab('manual')}>✏️ Manual</button>
-              <button style={S.tab(tab === 'screenshot')} onClick={handleSwitchToScreenshot}>📷 Screenshot</button>
+              <button style={S.tabBtn(tab === 'manual')} onClick={() => setTab('manual')}>✏️ Manual</button>
+              <button style={S.tabBtn(tab === 'screenshot')} onClick={handleSwitchToScreenshot}>📷 Screenshot</button>
             </div>
 
             {tab === 'manual' ? (
