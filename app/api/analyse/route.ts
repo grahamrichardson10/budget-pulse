@@ -45,10 +45,7 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    const type = (err as { constructor?: { name?: string } })?.constructor?.name ?? 'unknown'
-    const status = (err as { status?: number })?.status
-    const hasKey = !!process.env.ANTHROPIC_API_KEY
-    return NextResponse.json({ error: `Anthropic API error [${type}${status ? ' '+status : ''}] key=${hasKey}: ${message}` }, { status: 500 })
+    return NextResponse.json({ error: 'Anthropic API error: ' + message }, { status: 500 })
   }
 
   const raw = msg.content.find(b => b.type === 'text')?.text ?? ''

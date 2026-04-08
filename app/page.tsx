@@ -6,9 +6,20 @@ interface Assumptions {
   salary: number
   rent: number
   paydayDay: number
+  marketRate: number
+  dob: string
+  retirementAge: number
 }
 
-const DEFAULT_ASSUMPTIONS: Assumptions = { salary: 34860, rent: 15000, paydayDay: 25 }
+const DEFAULT_ASSUMPTIONS: Assumptions = {
+  salary: 34860,
+  rent: 15000,
+  paydayDay: 26,
+  marketRate: 6,
+  dob: '1993-09-07',
+  retirementAge: 65,
+}
+
 const STORAGE_KEY_BALANCE = 'bp_last_balance'
 const STORAGE_KEY_ASSUMPTIONS = 'bp_assumptions'
 
@@ -16,9 +27,9 @@ interface Results {
   balance: number
   daily: number
   daysLeft: number
+  daysSince: number
   shouldHave: number
   buffer: number
-  projectedAtPayday: number
   cycleDays: number
 }
 
@@ -31,18 +42,44 @@ function computeResults(balance: number, a: Assumptions): Results {
     : new Date(now.getFullYear(), now.getMonth() - 1, a.paydayDay)
   const cycleEnd = new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, a.paydayDay)
   const cycleDays = Math.round((cycleEnd.getTime() - cycleStart.getTime()) / 86400000)
-  const daysSinceStart = Math.round((now.getTime() - cycleStart.getTime()) / 86400000)
+  const daysSince = Math.floor((now.getTime() - cycleStart.getTime()) / 86400000)
   const daysLeft = Math.round((cycleEnd.getTime() - now.getTime()) / 86400000)
   const baseline = spendable / cycleDays
-  const shouldHave = spendable - daysSinceStart * baseline
+  const shouldHave = spendable - daysSince * baseline
   const buffer = balance - shouldHave
   const daily = Math.round(balance / daysLeft)
-  const projectedAtPayday = Math.round(balance - baseline * daysLeft)
-  return { balance, daily, daysLeft, shouldHave, buffer, projectedAtPayday, cycleDays }
+  return { balance, daily, daysLeft, daysSince, shouldHave, buffer, cycleDays }
+}
+
+function computeRetirementValue(buffer: number, a: Assumptions): number {
+  if (buffer <= 0) return 0
+  const dob = new Date(a.dob)
+  const now = new Date()
+  const ageYears = (now.getTime() - dob.getTime()) / (365.25 * 86400000)
+  const yearsToRetirement = a.retirementAge - ageYears
+  if (yearsToRetirement <= 0) return buffer
+  return buffer * Math.pow(1 + a.marketRate / 100, yearsToRetirement)
+}
+
+function expectedBalanceForDay(date: Date, a: Assumptions): number {
+  const spendable = a.salary - a.rent
+  const dom = date.getDate()
+  const cycleStart = dom >= a.paydayDay
+    ? new Date(date.getFullYear(), date.getMonth(), a.paydayDay)
+    : new Date(date.getFullYear(), date.getMonth() - 1, a.paydayDay)
+  const cycleEnd = new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, a.paydayDay)
+  const cycleDays = Math.round((cycleEnd.getTime() - cycleStart.getTime()) / 86400000)
+  const daysElapsed = Math.floor((date.getTime() - cycleStart.getTime()) / 86400000)
+  return Math.max(0, spendable - daysElapsed * (spendable / cycleDays))
 }
 
 function fmt(n: number) {
   return n.toLocaleString('sv-SE', { maximumFractionDigits: 0 })
+}
+
+function fmtK(n: number): string {
+  if (Math.abs(n) >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return String(Math.round(n))
 }
 
 // Resize image using canvas.toBlob — avoids atob/base64 string entirely (fixes iOS Safari SyntaxError)
@@ -71,6 +108,10 @@ async function resizeToBlob(file: File): Promise<Blob> {
   })
 }
 
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+const MONTH_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December']
+const DOW_LABELS = ['M','T','W','T','F','S','S']
+
 export default function Home() {
   const [tab, setTab] = useState<'manual' | 'screenshot'>('screenshot')
   const [manualBalance, setManualBalance] = useState('')
@@ -85,6 +126,23 @@ export default function Home() {
   const spendable = assumptions.salary - assumptions.rent
   const cycleDays = results?.cycleDays ?? 30
   const baseline = Math.round(spendable / cycleDays)
+
+  // Calendar data (computed once per render, stable)
+  const now = new Date()
+  const calYear = now.getFullYear()
+  const calMonth = now.getMonth()
+  const todayDate = now.getDate()
+  const firstDow = (new Date(calYear, calMonth, 1).getDay() + 6) % 7 // Mon=0
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate()
+  const calCells: (number | null)[] = [
+    ...Array(firstDow).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ]
+  while (calCells.length % 7 !== 0) calCells.push(null)
+
+  // DOB parsing
+  const dobParts = assumptions.dob.split('-').map(Number)
+  const dobYear = dobParts[0], dobMonth = dobParts[1], dobDay = dobParts[2]
 
   // Load persisted data on mount
   useEffect(() => {
@@ -117,10 +175,22 @@ export default function Home() {
     setResults(computeResults(balance, assumptions))
   }
 
-  function handleAssumptionChange(key: keyof Assumptions, value: string) {
+  function handleAssumptionChange(key: keyof Omit<Assumptions, 'dob'>, value: string) {
     const n = parseFloat(value)
     if (isNaN(n)) return
     const next = { ...assumptions, [key]: n }
+    setAssumptions(next)
+    try { localStorage.setItem(STORAGE_KEY_ASSUMPTIONS, JSON.stringify(next)) } catch { /* ignore */ }
+    if (results) setResults(computeResults(results.balance, next))
+  }
+
+  function handleDobChange(part: 'day' | 'month' | 'year', value: string) {
+    let y = dobYear, m = dobMonth, d = dobDay
+    if (part === 'year') y = parseInt(value)
+    if (part === 'month') m = parseInt(value)
+    if (part === 'day') d = parseInt(value)
+    const newDob = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const next = { ...assumptions, dob: newDob }
     setAssumptions(next)
     try { localStorage.setItem(STORAGE_KEY_ASSUMPTIONS, JSON.stringify(next)) } catch { /* ignore */ }
     if (results) setResults(computeResults(results.balance, next))
@@ -133,7 +203,6 @@ export default function Home() {
   }
 
   async function loadAndAnalyze(file: File) {
-    // Show preview immediately
     const previewUrl = URL.createObjectURL(file)
     setImgSrc(previewUrl)
     setStatus('Analyzing…')
@@ -182,6 +251,11 @@ export default function Home() {
     tryClipboardSilent()
   }
 
+  const retirementValue = results ? computeRetirementValue(results.buffer, assumptions) : 0
+  const progressPct = results ? Math.min(100, Math.max(0, (results.daysSince / results.cycleDays) * 100)) : 0
+  const isAhead = results ? results.buffer >= 0 : true
+  const accentColor = isAhead ? '#c8f04a' : '#ff4d6d'
+
   // ── Styles ───────────────────────────────────────────────────────────────────
   const S = {
     wrapper: { minHeight: '100vh', display: 'flex', flexDirection: 'column' as const, alignItems: 'center', padding: '40px 16px 80px', gap: '24px' },
@@ -213,6 +287,7 @@ export default function Home() {
     assumptionLabel: { fontSize: '0.75rem', color: '#6b6b80' },
     assumptionInput: { background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '6px', padding: '5px 8px', color: '#e8e8f0', fontFamily: "'DM Mono', monospace", fontSize: '0.85rem', width: '110px', textAlign: 'right' as const, outline: 'none' },
     assumptionReadonly: { fontFamily: "'Syne', sans-serif", fontWeight: 700, fontSize: '0.85rem', color: '#6b6b80' },
+    dobSelect: { background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '6px', padding: '5px 4px', color: '#e8e8f0', fontFamily: "'DM Mono', monospace", fontSize: '0.75rem', outline: 'none', cursor: 'pointer' },
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -247,34 +322,48 @@ export default function Home() {
                 : `${fmt(Math.abs(results.buffer))} behind`}
             </div>
 
+            {/* Progress bar */}
+            <div style={{ margin: '16px 0 4px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
+                <span style={{ fontSize: '0.6rem', color: '#6b6b80' }}>payday</span>
+                <span style={{ fontSize: '0.6rem', color: '#6b6b80' }}>next payday</span>
+              </div>
+              <div style={{ position: 'relative', height: '24px', background: '#0a0a0f', border: '1px solid #1e1e2e', borderRadius: '6px', overflow: 'hidden' }}>
+                <div style={{
+                  position: 'absolute', left: 0, top: 0, bottom: 0,
+                  width: `${progressPct}%`,
+                  background: isAhead ? 'rgba(200,240,74,0.12)' : 'rgba(255,77,109,0.12)',
+                }} />
+                <div style={{
+                  position: 'absolute', top: '2px', bottom: '2px',
+                  left: `calc(${progressPct}% - 1px)`,
+                  width: '2px',
+                  borderRadius: '1px',
+                  background: accentColor,
+                }} />
+              </div>
+            </div>
+
             <div style={S.divider} />
 
             {/* Metrics */}
             {[
-              {
-                label: "Today's target balance",
-                value: fmt(results.shouldHave) + ' SEK',
-                color: '#e8e8f0',
-              },
-              {
-                label: 'Actual balance',
-                value: fmt(results.balance) + ' SEK',
-                color: results.balance >= results.shouldHave ? '#c8f04a' : '#ff4d6d',
-              },
+              { label: "Today's target balance", value: fmt(results.shouldHave) + ' SEK', color: '#e8e8f0' },
+              { label: 'Actual balance', value: fmt(results.balance) + ' SEK', color: results.balance >= results.shouldHave ? '#c8f04a' : '#ff4d6d' },
               {
                 label: 'Pace',
-                value: results.buffer >= 0 ? 'Ahead' : 'Behind',
+                value: (results.buffer >= 0 ? '+' : '−') + fmt(Math.abs(results.buffer)) + ' SEK',
                 color: results.buffer >= 0 ? '#c8f04a' : '#ff4d6d',
               },
               {
-                label: 'Days until payday',
-                value: String(results.daysLeft),
-                color: '#e8e8f0',
+                label: `At retirement (age ${assumptions.retirementAge})`,
+                value: retirementValue > 0 ? fmt(retirementValue) + ' SEK' : '—',
+                color: retirementValue > 0 ? '#c8f04a' : '#6b6b80',
               },
               {
-                label: 'Projected at payday',
-                value: (results.projectedAtPayday >= 0 ? '+' : '') + fmt(results.projectedAtPayday) + ' SEK',
-                color: results.projectedAtPayday >= 0 ? '#c8f04a' : '#ff4d6d',
+                label: 'Days since / until payday',
+                value: `${results.daysSince} / ${results.daysLeft}`,
+                color: '#e8e8f0',
               },
             ].map((m) => (
               <div key={m.label} style={S.metricRow}>
@@ -282,6 +371,46 @@ export default function Home() {
                 <span style={S.metricValue(m.color)}>{m.value}</span>
               </div>
             ))}
+
+            {/* Calendar */}
+            <div style={{ marginTop: '24px' }}>
+              <div style={{ fontSize: '0.68rem', color: '#6b6b80', letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: '10px' }}>
+                {MONTH_FULL[calMonth]} {calYear}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px' }}>
+                {DOW_LABELS.map((d, i) => (
+                  <div key={i} style={{ textAlign: 'center', fontSize: '0.58rem', color: '#6b6b80', paddingBottom: '4px', fontFamily: "'DM Mono', monospace" }}>
+                    {d}
+                  </div>
+                ))}
+                {calCells.map((day, i) => {
+                  if (!day) return <div key={i} />
+                  const isToday = day === todayDate
+                  const isPayday = day === assumptions.paydayDay
+                  const isPast = day < todayDate
+                  const bal = expectedBalanceForDay(new Date(calYear, calMonth, day), assumptions)
+                  return (
+                    <div key={i} style={{
+                      background: isToday ? '#c8f04a' : '#0a0a0f',
+                      border: isPayday && !isToday ? '2px solid #c8f04a' : '1px solid #1e1e2e',
+                      borderRadius: '6px',
+                      padding: '4px 2px',
+                      textAlign: 'center',
+                      opacity: isPast && !isToday ? 0.4 : 1,
+                      minHeight: '44px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '2px',
+                    }}>
+                      <span style={{ fontSize: '0.65rem', color: isToday ? '#0a0a0f' : '#e8e8f0', fontFamily: "'DM Mono', monospace", fontWeight: isToday ? 700 : 400 }}>{day}</span>
+                      <span style={{ fontSize: '0.55rem', color: isToday ? '#1a1a2e' : '#6b6b80', fontFamily: "'DM Mono', monospace" }}>{fmtK(bal)}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
 
             {/* Assumptions disclosure */}
             <button style={S.disclosureBtn} onClick={() => setAssumptionsOpen(o => !o)}>
@@ -294,7 +423,9 @@ export default function Home() {
                 {([
                   { label: 'Salary (SEK)', key: 'salary' as const },
                   { label: 'Rent (SEK)', key: 'rent' as const },
-                  { label: 'Payday (day)', key: 'paydayDay' as const },
+                  { label: 'Payday (day of month)', key: 'paydayDay' as const },
+                  { label: 'Market rate (%)', key: 'marketRate' as const },
+                  { label: 'Retirement age', key: 'retirementAge' as const },
                 ]).map(({ label, key }) => (
                   <div key={key} style={S.assumptionRow}>
                     <span style={S.assumptionLabel}>{label}</span>
@@ -306,6 +437,30 @@ export default function Home() {
                     />
                   </div>
                 ))}
+
+                {/* Date of birth */}
+                <div style={S.assumptionRow}>
+                  <span style={S.assumptionLabel}>Date of birth</span>
+                  <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                    <select value={dobDay} onChange={e => handleDobChange('day', e.target.value)} style={S.dobSelect}>
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                    <select value={dobMonth} onChange={e => handleDobChange('month', e.target.value)} style={S.dobSelect}>
+                      {MONTH_NAMES.map((m, i) => (
+                        <option key={i} value={i + 1}>{m}</option>
+                      ))}
+                    </select>
+                    <select value={dobYear} onChange={e => handleDobChange('year', e.target.value)} style={S.dobSelect}>
+                      {Array.from({ length: 80 }, (_, i) => 2005 - i).map(y => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Read-only auto fields */}
                 <div style={S.assumptionRow}>
                   <span style={S.assumptionLabel}>Spendable (auto)</span>
                   <span style={S.assumptionReadonly}>{fmt(spendable)} SEK</span>
@@ -358,11 +513,11 @@ export default function Home() {
                   style={{ display: 'none' }}
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) loadAndAnalyze(f) }}
                 />
-                <button style={S.btnAccent} disabled={loading} onClick={() => fileInputRef.current?.click()}>
-                  📁 Choose from Library
-                </button>
-                <button style={S.btnOutline} disabled={loading} onClick={handleClipboard}>
+                <button style={S.btnAccent} disabled={loading} onClick={handleClipboard}>
                   📋 Paste from Clipboard
+                </button>
+                <button style={S.btnOutline} disabled={loading} onClick={() => fileInputRef.current?.click()}>
+                  📁 Choose from Library
                 </button>
                 {status && (
                   <div style={S.statusText(status.startsWith('Error'))}>
