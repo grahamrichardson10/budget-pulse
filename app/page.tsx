@@ -144,11 +144,13 @@ export default function Home() {
       const fd = new FormData()
       fd.append('image', blob, 'image.jpg')
       const res = await fetch('/api/analyse', { method: 'POST', body: fd })
-      const data = await res.json()
+      const text = await res.text()
+      let data: { balance?: number; error?: string }
+      try { data = JSON.parse(text) } catch { throw new Error('Server error ' + res.status + ': ' + text.slice(0, 120)) }
       if (!res.ok) {
         setStatus('Error: ' + (data.error ?? res.statusText))
       } else {
-        handleShowResults(data.balance)
+        handleShowResults(data.balance!)
       }
     } catch (err) {
       setStatus('Error: ' + String(err))
