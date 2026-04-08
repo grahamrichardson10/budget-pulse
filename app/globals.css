@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;700;800&display=swap');
+
+:root {
+  --bg: #0a0a0f;
+  --surface: #111118;
+  --border: #1e1e2e;
+  --accent: #c8f04a;
+  --red: #ff4d6d;
+  --text: #e8e8f0;
+  --muted: #6b6b80;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+  min-height: 100vh;
+  background-image: radial-gradient(ellipse at 20% 20%, #1a1a2e 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 80%, #0d1f0d 0%, transparent 60%);
+}
