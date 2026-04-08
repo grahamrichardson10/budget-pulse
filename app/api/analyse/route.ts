@@ -4,16 +4,19 @@ import Anthropic from '@anthropic-ai/sdk'
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 export async function POST(req: NextRequest) {
-  const { image, mediaType } = await req.json()
+  const formData = await req.formData()
+  const file = formData.get('image') as File | null
 
-  if (!image || !mediaType) {
-    return NextResponse.json({ error: 'Missing image or mediaType' }, { status: 400 })
+  if (!file) {
+    return NextResponse.json({ error: 'Missing image' }, { status: 400 })
   }
 
+  const mediaType = file.type || 'image/jpeg'
   const validTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
-  if (!validTypes.includes(mediaType)) {
-    return NextResponse.json({ error: 'Invalid media type' }, { status: 400 })
-  }
+  const safeType = validTypes.includes(mediaType) ? mediaType : 'image/jpeg'
+
+  const buffer = await file.arrayBuffer()
+  const base64 = Buffer.from(buffer).toString('base64')
 
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
@@ -25,8 +28,8 @@ export async function POST(req: NextRequest) {
           type: 'image',
           source: {
             type: 'base64',
-            media_type: mediaType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
-            data: image,
+            media_type: safeType as 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
+            data: base64,
           },
         },
         {

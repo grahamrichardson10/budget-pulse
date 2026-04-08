@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 interface Assumptions {
   salary: number
@@ -76,7 +76,7 @@ async function resizeImage(dataUrl: string, mediaType: string): Promise<{ base64
 }
 
 export default function Home() {
-  const [tab, setTab] = useState<'manual' | 'screenshot'>('manual')
+  const [tab, setTab] = useState<'manual' | 'screenshot'>('screenshot')
   const [manualBalance, setManualBalance] = useState('')
   const [results, setResults] = useState<Results | null>(null)
   const [imgSrc, setImgSrc] = useState<string | null>(null)
@@ -87,6 +87,27 @@ export default function Home() {
   const [assumptions, setAssumptions] = useState<Assumptions>(DEFAULT_ASSUMPTIONS)
   const [assumptionsOpen, setAssumptionsOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Auto-check clipboard on mount
+  useEffect(() => {
+    tryClipboardSilent()
+  }, [])
+
+  async function tryClipboardSilent() {
+    try {
+      const items = await navigator.clipboard.read()
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith('image/'))
+        if (imageType) {
+          const blob = await item.getType(imageType)
+          loadImageFile(new File([blob], 'clipboard', { type: imageType }))
+          return
+        }
+      }
+    } catch {
+      // silently ignore — clipboard unavailable or no image
+    }
+  }
 
   const spendable = assumptions.salary - assumptions.rent
   const cycleDays = results?.cycleDays ?? 30
@@ -140,33 +161,19 @@ export default function Home() {
         const imageType = item.types.find((t) => t.startsWith('image/'))
         if (imageType) {
           const blob = await item.getType(imageType)
-          const file = new File([blob], 'clipboard', { type: imageType })
-          loadImageFile(file)
+          loadImageFile(new File([blob], 'clipboard', { type: imageType }))
           return
         }
       }
-      setStatus('No image found in clipboard.')
+      setStatus('No image in clipboard.')
     } catch {
-      setStatus('Clipboard not available — use Choose from Library.')
+      setStatus('Clipboard unavailable — use Choose from Library.')
     }
   }
 
-  async function handleSwitchToScreenshot() {
+  function handleSwitchToScreenshot() {
     setTab('screenshot')
-    try {
-      const items = await navigator.clipboard.read()
-      for (const item of items) {
-        const imageType = item.types.find((t) => t.startsWith('image/'))
-        if (imageType) {
-          const blob = await item.getType(imageType)
-          const file = new File([blob], 'clipboard', { type: imageType })
-          loadImageFile(file)
-          return
-        }
-      }
-    } catch {
-      // silently ignore on iOS
-    }
+    tryClipboardSilent()
   }
 
   async function handleAnalyse() {
@@ -174,11 +181,15 @@ export default function Home() {
     setLoading(true)
     setStatus('Analysing…')
     try {
-      const res = await fetch('/api/analyse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: imgBase64, mediaType: imgMediaType }),
-      })
+      // Convert base64 back to blob and send as FormData — avoids iOS Safari JSON body size limits
+      const byteStr = atob(imgBase64)
+      const ab = new ArrayBuffer(byteStr.length)
+      const ia = new Uint8Array(ab)
+      for (let i = 0; i < byteStr.length; i++) ia[i] = byteStr.charCodeAt(i)
+      const blob = new Blob([ab], { type: imgMediaType })
+      const fd = new FormData()
+      fd.append('image', blob, 'image.jpg')
+      const res = await fetch('/api/analyse', { method: 'POST', body: fd })
       const data = await res.json()
       if (!res.ok) {
         setStatus('Error: ' + (data.error ?? res.statusText))
