@@ -124,6 +124,7 @@ export default function Home() {
   const [progressDetailOpen, setProgressDetailOpen] = useState(false)
   const [paceOpen, setPaceOpen] = useState(false)
   const [paceInvestOpen, setPaceInvestOpen] = useState(false)
+  const [rateInputValue, setRateInputValue] = useState(String(DEFAULT_ASSUMPTIONS.marketRate))
   const [calendarOpen, setCalendarOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -169,7 +170,11 @@ export default function Home() {
       const savedBalance = localStorage.getItem(STORAGE_KEY_BALANCE)
       if (savedBalance) setManualBalance(savedBalance)
       const savedAssumptions = localStorage.getItem(STORAGE_KEY_ASSUMPTIONS)
-      if (savedAssumptions) setAssumptions(JSON.parse(savedAssumptions))
+      if (savedAssumptions) {
+        const parsed = JSON.parse(savedAssumptions)
+        setAssumptions(parsed)
+        if (parsed.marketRate != null) setRateInputValue(String(parsed.marketRate))
+      }
     } catch { /* ignore */ }
     tryClipboardSilent()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -199,6 +204,7 @@ export default function Home() {
     if (isNaN(n)) return
     const next = { ...assumptions, [key]: n }
     setAssumptions(next)
+    if (key === 'marketRate') setRateInputValue(String(n))
     try { localStorage.setItem(STORAGE_KEY_ASSUMPTIONS, JSON.stringify(next)) } catch { /* ignore */ }
     if (results) setResults(computeResults(results.balance, next))
   }
@@ -469,9 +475,18 @@ export default function Home() {
                     <span style={{ color: '#e8e8f0' }}>{fmt(Math.max(0, results.buffer))} SEK</span>
                     {' '}today at{' '}
                     <input
-                      type="number"
-                      value={assumptions.marketRate}
-                      onChange={e => handleAssumptionChange('marketRate', e.target.value)}
+                      type="text"
+                      inputMode="decimal"
+                      value={rateInputValue}
+                      onChange={e => {
+                        setRateInputValue(e.target.value)
+                        const n = parseFloat(e.target.value)
+                        if (!isNaN(n)) handleAssumptionChange('marketRate', e.target.value)
+                      }}
+                      onBlur={() => {
+                        const n = parseFloat(rateInputValue)
+                        if (isNaN(n)) setRateInputValue(String(assumptions.marketRate))
+                      }}
                       onClick={e => e.stopPropagation()}
                       onTouchStart={e => e.stopPropagation()}
                       onTouchEnd={e => e.stopPropagation()}
