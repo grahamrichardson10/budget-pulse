@@ -126,6 +126,7 @@ export default function Home() {
   const [paceInvestOpen, setPaceInvestOpen] = useState(false)
   const [rateInputValue, setRateInputValue] = useState(String(DEFAULT_ASSUMPTIONS.marketRate))
   const [calendarOpen, setCalendarOpen] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const spendable = assumptions.salary - assumptions.rent
@@ -219,6 +220,16 @@ export default function Home() {
     setAssumptions(next)
     try { localStorage.setItem(STORAGE_KEY_ASSUMPTIONS, JSON.stringify(next)) } catch { /* ignore */ }
     if (results) setResults(computeResults(results.balance, next))
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files?.[0]
+    if (!file || !file.type.startsWith('image/')) return
+    if (results) handleReset()
+    setTab('screenshot')
+    loadAndAnalyze(file)
   }
 
   function handleReset() {
@@ -330,7 +341,12 @@ export default function Home() {
         </header>
 
         {results ? (
-          <div style={S.resultCard}>
+          <div
+            style={{ ...S.resultCard, border: dragOver ? '1px solid #c8f04a' : S.resultCard.border }}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
 
             {/* ── Big number ── */}
             <div style={S.bigLabel}>Daily budget remaining</div>
@@ -607,7 +623,12 @@ export default function Home() {
             <button style={S.ghostBtn} onClick={handleReset}>↩ New Check</button>
           </div>
         ) : (
-          <div style={S.card}>
+          <div
+            style={{ ...S.card, border: dragOver ? '1px solid #c8f04a' : S.card.border }}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+          >
             <div style={S.tabRow}>
               <button style={S.tabBtn(tab === 'manual')} onClick={() => setTab('manual')}>✏️ Manual</button>
               <button style={S.tabBtn(tab === 'screenshot')} onClick={handleSwitchToScreenshot}>📷 Screenshot</button>
